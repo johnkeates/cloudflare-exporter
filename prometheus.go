@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	log "github.com/sirupsen/logrus"
 	"strconv"
 	"sync"
 
@@ -442,39 +443,43 @@ func fetchZoneColocationAnalytics(zones []cloudflare.Zone, wg *sync.WaitGroup) {
 }
 
 func fetchZoneAnalytics(zones []cloudflare.Zone, wg *sync.WaitGroup) {
+	log.Info("Calling fetchZoneAnalytics")
 	wg.Add(1)
 	defer wg.Done()
 
 	// None of the below referenced metrics are available in the free tier
-	if cfgFreeTier {
-		return
-	}
+	//if cfgFreeTier {
+	//	return
+	//}
 
-	zoneIDs := extractZoneIDs(filterNonFreePlanZones(zones))
+	//zoneIDs := extractZoneIDs(filterNonFreePlanZones(zones))
+	zoneIDs := extractZoneIDs(zones)
 	if len(zoneIDs) == 0 {
+		log.Info("No zone IDs extracted")
 		return
 	}
 
 	r, err := fetchZoneTotals(zoneIDs)
 	if err != nil {
+		log.Warningf("Unable to fetch zone totals: %s", err)
 		return
 	}
 
 	for _, z := range r.Viewer.Zones {
 		name := findZoneName(zones, z.ZoneTag)
+		log.Infof("Adding zone %s", name)
+		log.Infof("Zone has %d groups", len(z.HTTP1hGroups))
 		addHTTPGroups(&z, name)
-		addFirewallGroups(&z, name)
-		addHealthCheckGroups(&z, name)
-		addHTTPAdaptiveGroups(&z, name)
 	}
 }
 
 func addHTTPGroups(z *zoneResp, name string) {
 	// Nothing to do.
-	if len(z.HTTP1mGroups) == 0 {
+	if len(z.HTTP1hGroups) == 0 {
+		log.Info("addHTTPGroups had nothing to do because HTTP1hGroups contains no data")
 		return
 	}
-	zt := z.HTTP1mGroups[0]
+	zt := z.HTTP1hGroups[0]
 
 	zoneRequestTotal.With(prometheus.Labels{"zone": name}).Add(float64(zt.Sum.Requests))
 	zoneRequestCached.With(prometheus.Labels{"zone": name}).Add(float64(zt.Sum.CachedRequests))

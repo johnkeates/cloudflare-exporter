@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"github.com/cloudflare/cloudflare-go"
 	"time"
 
-	"github.com/cloudflare/cloudflare-go"
 	"github.com/machinebox/graphql"
 	log "github.com/sirupsen/logrus"
 )
@@ -84,7 +84,7 @@ type zoneRespColo struct {
 }
 
 type zoneResp struct {
-	HTTP1mGroups []struct {
+	HTTP1hGroups []struct {
 		Dimensions struct {
 			Datetime string `json:"datetime"`
 		} `json:"dimensions"`
@@ -135,7 +135,7 @@ type zoneResp struct {
 			} `json:"threatPathingMap"`
 			Threats uint64 `json:"threats"`
 		} `json:"sum"`
-	} `json:"httpRequests1mGroups"`
+	} `json:"httpRequests1hGroups"`
 
 	FirewallEventsAdaptiveGroups []struct {
 		Count      uint64 `json:"count"`
@@ -264,17 +264,16 @@ func fetchAccounts() []cloudflare.Account {
 }
 
 func fetchZoneTotals(zoneIDs []string) (*cloudflareResponse, error) {
-	now := time.Now().Add(-time.Duration(cfgScrapeDelay) * time.Second).UTC()
-	s := 60 * time.Second
-	now = now.Truncate(s)
-	now1mAgo := now.Add(-60 * time.Second)
+	now := time.Now().UTC()
+	now = now.Truncate(time.Hour)
+	now1hAgo := now.Add(-time.Hour)
 
 	request := graphql.NewRequest(`
 query ($zoneIDs: [String!], $mintime: Time!, $maxtime: Time!, $limit: Int!) {
 	viewer {
 		zones(filter: { zoneTag_in: $zoneIDs }) {
 			zoneTag
-			httpRequests1mGroups(limit: $limit filter: { datetime: $maxtime }) {
+			httpRequests1hGroups(limit: $limit filter: { datetime: $maxtime }) {
 				uniq {
 					uniques
 				}
@@ -327,40 +326,6 @@ query ($zoneIDs: [String!], $mintime: Time!, $maxtime: Time!, $limit: Int!) {
 					datetime
 				}
 			}
-			firewallEventsAdaptiveGroups(limit: $limit, filter: { datetime_geq: $mintime, datetime_lt: $maxtime }) {
-				count
-				dimensions {
-				  action
-				  source
-				  clientRequestHTTPHost
-				  clientCountryName
-				}
-			}
-			httpRequestsAdaptiveGroups(limit: $limit, filter: { datetime_geq: $mintime, datetime_lt: $maxtime, cacheStatus_notin: ["hit"] }) {
-				count
-				dimensions {
-					originResponseStatus
-					clientCountryName
-					clientRequestHTTPHost
-				}
-			}
-			httpRequestsEdgeCountryHost: httpRequestsAdaptiveGroups(limit: $limit, filter: { datetime_geq: $mintime, datetime_lt: $maxtime }) {
-				count
-				dimensions {
-					edgeResponseStatus
-					clientCountryName
-					clientRequestHTTPHost
-				}
-			}
-			healthCheckEventsAdaptiveGroups(limit: $limit, filter: { datetime_geq: $mintime, datetime_lt: $maxtime }) {
-				count
-				dimensions {
-					healthStatus
-					originIP
-					region
-					fqdn
-				}
-			}
 		}
 	}
 }
@@ -371,9 +336,14 @@ query ($zoneIDs: [String!], $mintime: Time!, $maxtime: Time!, $limit: Int!) {
 		request.Header.Set("X-AUTH-EMAIL", cfgCfAPIEmail)
 		request.Header.Set("X-AUTH-KEY", cfgCfAPIKey)
 	}
+	log.Infof("limit %d", 9999)
+	log.Infof("maxtime %s", now)
+	log.Infof("mintime %s", now1hAgo)
+	log.Infof("zoneIDs %s", zoneIDs)
+
 	request.Var("limit", 9999)
 	request.Var("maxtime", now)
-	request.Var("mintime", now1mAgo)
+	request.Var("mintime", now1hAgo)
 	request.Var("zoneIDs", zoneIDs)
 
 	ctx := context.Background()
@@ -381,6 +351,7 @@ query ($zoneIDs: [String!], $mintime: Time!, $maxtime: Time!, $limit: Int!) {
 
 	var resp cloudflareResponse
 	if err := graphqlClient.Run(ctx, request, &resp); err != nil {
+		log.Error("Error during fetchZoneTotals")
 		log.Error(err)
 		return nil, err
 	}
@@ -573,6 +544,7 @@ func fetchLoadBalancerTotals(zoneIDs []string) (*cloudflareResponseLb, error) {
 	graphqlClient := graphql.NewClient(cfGraphQLEndpoint)
 	var resp cloudflareResponseLb
 	if err := graphqlClient.Run(ctx, request, &resp); err != nil {
+		log.Error("Error during fetchLoadBalancerTotals")
 		log.Error(err)
 		return nil, err
 	}
